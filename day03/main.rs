@@ -1,6 +1,6 @@
-use std::{fs, str::FromStr, collections::HashSet};
+use std::{fs, str::FromStr, collections::{HashSet, HashMap}};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 enum SchematicElement {
     Part((usize, u64)),
     Symbol(char),
@@ -91,33 +91,43 @@ fn main() {
     println!("Part 2: {}", part2(&contents));
 }
 
+fn get_part_number_at(
+    cache: &mut HashSet<(usize, u64)>,
+    schematic: &Schematic,
+    x: i64,
+    y: i64,
+) -> Option<u64> {
+    let Schematic { width, height, elements } = schematic;
+
+    if x < 0 || x >= *width as i64 || y < 0 || y >= *height as i64 {
+        return None;
+    }
+    
+    let i = y as usize * width + x as usize;
+
+    if let SchematicElement::Part((s, num)) = elements[i] {
+        let key = (s, num);
+
+        if cache.contains(&key) {
+            return None
+        }
+
+        cache.insert(key);
+        return Some(num);
+    }
+
+    None
+}
+
 fn part1(input: &str) -> String {
-    let Schematic { width, height, elements } = Schematic::from_str(input)
+    let schematic = Schematic::from_str(input)
         .expect("Failed to parse input");
+
+    let Schematic { width, height: _, elements } = &schematic;
 
     let mut sum = 0;
     let mut set = HashSet::<(usize, u64)>::new();
 
-    let get_part_number_at = |set: &mut HashSet<(usize, u64)>, x: i64, y: i64| {
-        if x < 0 || x >= width as i64 || y < 0 || y >= height as i64 {
-            return None;
-        }
-        
-        let i = y as usize * width + x as usize;
-
-        if let SchematicElement::Part((s, num)) = elements[i] {
-            let key = (s, num);
-
-            if set.contains(&key) {
-                return None
-            }
-
-            set.insert(key);
-            return Some(num);
-        }
-
-        None
-    };
 
     for i in 0..elements.len() {
         let x = (i % width) as i64;
@@ -127,25 +137,60 @@ fn part1(input: &str) -> String {
             continue;
         }
 
-        sum += get_part_number_at(&mut set, x - 1, y).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x - 1, y - 1).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x, y - 1).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x + 1, y - 1).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x + 1, y).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x + 1, y + 1).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x, y + 1).unwrap_or(0);
-        sum += get_part_number_at(&mut set, x - 1, y + 1).unwrap_or(0);
+        for i in -1..=1 {
+            for j in -1..=1 {
+                if i == 0 && j == 0 {
+                    continue;
+                }
+
+                sum += get_part_number_at(&mut set, &schematic, x + i, y + j).unwrap_or(0);
+            }
+        }
     }
 
     sum.to_string()
 }
 
 fn part2(input: &str) -> String {
-    let Schematic { width, height, elements } = Schematic::from_str(input)
+    let schematic = Schematic::from_str(input)
         .expect("Failed to parse input");
 
+    let Schematic { width, height: _, elements } = &schematic;
 
 
-    "".to_owned()
+    let mut map = HashMap::<usize, HashSet<(usize, u64)>>::new();
+    
+    for i in 0..elements.len() {
+        let x = (i % width) as i64;
+        let y = (i / width) as i64;
+
+        match elements[i] {
+            SchematicElement::Symbol('*') => {
+                let set = map.entry(i).or_insert(HashSet::new());
+
+                for i in -1..=1 {
+                    for j in -1..=1 {
+                        if i == 0 && j == 0 {
+                            continue;
+                        }
+
+                        get_part_number_at(set, &schematic, x + i, y + j)
+                            .unwrap_or(0);
+                    }
+                }
+            },
+            _ => continue,
+        }
+    }
+
+
+    let ans = map
+        .iter()
+        .filter(|(_, value)| value.len() == 2)
+        .map(|(_, value)| value.iter().fold(1u64, |a, (_, num)| a * num))
+        .fold(0u64, |a, x| a + x);
+
+
+    ans.to_string()
 }
 
