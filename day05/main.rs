@@ -1,4 +1,4 @@
-use std::{fs, str::FromStr, thread::sleep, time::Duration};
+use std::{collections::VecDeque, fs, str::FromStr, thread::sleep, time::Duration};
 
 fn main() {
     let contents = fs::read_to_string("./exampleinput")
@@ -19,16 +19,50 @@ struct Almanac {
     categories: Vec<Category>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 struct Category {
     mappings: Vec<Mapping>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 struct Mapping {
     source_start: u64,
-    range_length: u64,
+    source_end: u64,
     destination_start: u64,
+    destination_end: u64,
+}
+
+impl Mapping {
+    fn new(source_start: u64, destination_start: u64, len: u64) -> Self {
+        Mapping {
+            source_start,
+            source_end: source_start + len,
+            destination_start,
+            destination_end: destination_start + len
+        }
+    }
+
+    fn len(&self) -> u64 {
+        assert!(self.source_end - self.source_start == self.destination_end - self.destination_start);
+
+        self.source_end - self.source_start
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn shrink_start_by(&mut self, len: u64) {
+        self.source_start += len;
+        self.destination_start += len;
+    }
+
+    fn shrink_end_by(&mut self, len: u64) {
+        assert!(self.source_end >= len && self.destination_end >= len);
+
+        self.source_end -= len;
+        self.destination_end -= len;
+    }
 }
 
 impl Almanac {
@@ -40,6 +74,114 @@ impl Almanac {
 }
 
 impl Category {
+    fn merge(&self, source: &Self) -> Self {
+        let mut sources = source.mappings.clone();
+        let mut destinations = self.mappings.clone();
+        let mut merged: Vec<Mapping> = Vec::new();
+        sources.sort_by_key(|x| x.source_start);
+        destinations.sort_by_key(|x| x.source_start);
+        println!("Merging: \n\t{:?}\n\t{:?}", sources, destinations);
+
+        // Map sources
+        while ! sources.is_empty() {
+            let a = &sources[0];
+
+            if a.is_empty() {
+                sources.remove(0);
+                continue;
+            }
+
+            println!("Wot:\n\t{:?}", a);
+            let b = match destinations
+                .iter()
+                .find(|b| b.source_end > a.destination_start && b.source_start < a.destination_end) {
+                Some(b) => b,
+                None => {
+                    merged.push(sources.remove(0));
+                    continue;
+                }
+            };
+            println!("\t{:?}", b);
+
+         
+            if a.destination_start < b.source_start {
+                let len = b.source_start - a.destination_start;
+                println!("if {:?}", Mapping::new(a.source_start, a.destination_start, len));
+                merged.push(Mapping::new(a.source_start, a.destination_start, len));
+                (&mut sources[0]).shrink_start_by(len);
+
+                continue;
+            }
+
+            if a.destination_start >= b.source_start {
+                let len = (a.destination_end - a.destination_start).min(b.source_end - a.destination_start);
+                let shift = a.destination_start - b.source_start;
+                println!("else {:?}", Mapping::new(a.source_start, b.destination_start + shift, len));
+                merged.push(Mapping::new(a.source_start, b.destination_start + shift, len));
+                (&mut sources[0]).shrink_start_by(len);
+
+                continue;
+            }
+        }
+
+        merged.sort_by_key(|x| x.source_start);
+
+        println!("\nOut mappings:");
+        for mapping in merged.iter() {
+            println!("{:?}", mapping)
+        }
+        println!("-------------------------------");
+
+        // Fill gaps with destinations
+        let mut i = 0;
+        
+        let mut fallthrough_gaps: Vec<Mapping> = Vec::new();
+
+        while ! destinations.is_empty() && i < merged.len() {
+            let x = &destinations[0];
+            let y = &merged[i];
+
+            if x.is_empty() {
+                println!("Found empty {:?}, skipping...", x);
+                destinations.remove(0);
+                continue;
+            }
+
+            println!("Comparing\n\t{:?}\n\t{:?}", x, y);
+            
+            if x.source_start < y.source_start {
+                let len = x.len().min(y.source_start - x.source_start);
+                fallthrough_gaps.push(Mapping::new(x.source_start, x.destination_start, len));
+                (&mut destinations[0]).shrink_start_by(len);
+                println!("If");
+
+                continue;
+            }
+
+            if x.source_start < y.source_end && x.source_end > y.source_start {
+                let len = x.len().min(y.source_end - x.source_start);
+                (&mut destinations[0]).shrink_start_by(len);
+                println!("Else");
+
+                continue;
+            }
+
+            i += 1;
+        }
+
+        fallthrough_gaps.extend(destinations);
+
+        println!("Fallthrough:");
+        for mapping in fallthrough_gaps.iter() {
+            println!("{:?}", mapping)
+        }
+
+        merged.extend(fallthrough_gaps);
+        merged.sort_by_key(|x| x.source_start);
+
+        Category { mappings: merged }
+    }
+
     /**
      * Find the destination of a source by using binary search
      */
@@ -62,7 +204,7 @@ impl Category {
             let mid_item = &self.mappings[mid];
             
             if mid_item.source_start <= source
-               && source < mid_item.source_start + mid_item.range_length {
+               && source < mid_item.source_end {
 
                 return Some(mid_item);
             }
@@ -72,7 +214,7 @@ impl Category {
                 continue;
             }
 
-            if mid_item.source_start + mid_item.range_length <= source {
+            if mid_item.source_end <= source {
                 s = mid + 1;
                 continue;
             }
@@ -140,18 +282,8 @@ impl FromStr for Mapping {
         }
 
         match nums[..] {
-            [a, b, c] => 
-                Ok(
-                    Self {
-                        destination_start: a,
-                        source_start: b,
-                        range_length: c,
-                    }
-                ),
-            _ =>
-                Err(
-                    format!("Mapping has an incorect number of parameters {}", s)
-                ),
+            [a, b, c] => Ok(Self::new(a, b, c)),
+            _ => Err(format!("Mapping has an incorect number of parameters {}", s)),
         }
     }
 }
@@ -175,28 +307,86 @@ fn part2(almanac: &Almanac) -> String {
 
     let mut lowest_location = u64::MAX;
 
-    // COMPLETELY WRONG
-    for (mut start, mut end) in seed_ranges.iter() {
+    let merged = almanac.categories.clone().into_iter().rev().take(3).reduce(|a, b| a.merge(&b));
 
-        while start < end {
-            let first_category = &almanac.categories[0];
+    println!("Final mapping: {:#?}", merged);
 
-            let mapping_maybe = first_category.find_matching_mapping(start);
-            println!("inside {:?}, {:?} | {:?}", start, end, mapping_maybe);
+    "".to_owned()
+}
 
-            match mapping_maybe {
-                Some(mapping) => {
-                    lowest_location = lowest_location.min(almanac.find_seed_location(start));
 
-                    start = mapping.source_start + mapping.range_length;
-                },
-                None => {
-                    lowest_location = lowest_location.min(almanac.find_seed_location(start));
-                    start += 1;
-                },
-            }
-        }
+
+#[cfg(test)]
+mod tests {
+    use crate::{Category, Mapping};
+
+    // #[test]
+    fn test1() {
+        let a = Category {
+            mappings: vec![
+                Mapping::new(0, 69, 1),
+                Mapping::new(1, 0, 69),
+            ],
+        };
+
+        let b = Category {
+            mappings: vec![
+                Mapping::new(60, 56, 37),
+                Mapping::new(56, 93, 4),
+            ],
+        };
+
+
+        let actual = b.merge(&a);
+        let expected = Category {
+            mappings: vec![
+                Mapping::new(0, 65, 1),
+                Mapping::new(1, 0, 56),
+                Mapping::new(57, 93, 4),
+                Mapping::new(61, 56, 9),
+                Mapping::new(70, 66, 27),
+            ],
+        };
+
+        assert_eq!(expected, actual);
     }
 
-    lowest_location.to_string()
+    #[test]
+    fn test2() {
+        let a = Category {
+            mappings: vec![
+                Mapping::new(0, 65, 1),
+                Mapping::new(1, 0, 56),
+                Mapping::new(57, 93, 4),
+                Mapping::new(61, 56, 9),
+                Mapping::new(70, 66, 27),
+            ],
+        };
+
+        let b = Category {
+            mappings: vec![
+                Mapping::new(45, 77, 23),
+                Mapping::new(68, 64, 13),
+                Mapping::new(81, 45, 19),
+            ],
+        };
+
+
+        let actual = a.merge(&b);
+        let expected = Category {
+            mappings: vec![
+                Mapping::new(0, 65, 1),
+                Mapping::new(1, 0, 44),
+                Mapping::new(45, 73, 20),
+                Mapping::new(65, 97, 3),
+                Mapping::new(68, 59, 6),
+                Mapping::new(74, 66, 7),
+                Mapping::new(81, 44, 12),
+                Mapping::new(93, 93, 4),
+                Mapping::new(97, 56, 3),
+            ],
+        };
+
+        assert_eq!(expected, actual);
+    }
 }
