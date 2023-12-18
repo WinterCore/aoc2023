@@ -19,12 +19,12 @@ struct Almanac {
     categories: Vec<Category>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Category {
     mappings: Vec<Mapping>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Mapping {
     source_start: u64,
     range_length: u64,
@@ -40,6 +40,100 @@ impl Almanac {
 }
 
 impl Category {
+    fn merge(categories: &[Self]) -> Self {
+        // TODO: Check for len < 2
+        let mut merged_category: Category = categories.last().cloned().unwrap();
+
+        // Collapse the ranges bottom up
+
+        for i in (categories.len() - 2)..=0 {
+
+            let Category { mappings } = &categories[i];
+            let mut merged: Vec<Mapping> = vec![];
+
+            for mapping in mappings {
+                let filler_mappings: Vec<&Mapping> = merged_category.mappings
+                    .iter()
+                    .take_while(|x| x.source_start < mapping.source_start)
+                    .collect();
+
+                println!("Filler mappings {:?}\n", mapping);
+                for item in filler_mappings {
+                    merged.push(Mapping {
+                        source_start: item.source_start,
+                        range_length: item.range_length
+                            .min(mapping.source_start - item.source_start),
+                        destination_start: item.destination_start,
+                    });
+                }
+                
+                let overlapping_mappings: Vec<&Mapping> = merged_category.mappings
+                    .iter()
+                    .take_while(|x| {
+                        // println!("\t{}.max({}) <= {}.min({}) = {} <= {}\n", x.source_start, mapping.destination_start, x.source_end(), mapping.destination_end(), x.source_start.max(mapping.destination_start), x.source_end().min(mapping.destination_end()));
+
+                        x.source_start.max(mapping.destination_start)
+                        <= x.source_end().min(mapping.destination_end())
+                    })
+                    .collect();
+                println!("Overlapping mappings {:?}\n", overlapping_mappings);
+
+                /*
+                * 2.max(50) <= 12.min(60)
+                * 50 <= 12
+                * false
+                */
+
+                for item in overlapping_mappings {
+                    if mapping.source_start < item.source_start {
+                        println!("\tFirst if---------");
+                        let range_length = item.source_start - mapping.source_start;
+
+                        merged.push(Mapping {
+                            source_start: mapping.source_start,
+                            range_length,
+                            destination_start: mapping.destination_start,
+                        });
+
+                        continue;
+                    }
+
+
+                    let start = merged.last().map_or(mapping.source_start, |x| x.source_end());
+                    let end = mapping.destination_end().min(item.source_end());
+                    
+                    println!("start = {}, end = {}, dest_start = {}", start, end, item.destination_start);
+
+                    let range_length = end - start;
+
+                    merged.push(Mapping {
+                        source_start: start,
+                        range_length,
+                        destination_start: item.destination_start + (mapping.destination_start - item.source_start),
+                    });
+
+                }
+                
+
+                let start = merged.last().map_or(mapping.source_start, |x| x.source_end());
+
+                if start < mapping.source_end() {
+                    let range_length = mapping.source_end() - start;
+
+                    merged.push(Mapping {
+                        source_start: start,
+                        range_length,
+                        destination_start: mapping.destination_end() - range_length,
+                    });
+                }
+            }
+
+            merged_category = Category { mappings: merged };
+        }
+
+        merged_category
+    }
+
     /**
      * Find the destination of a source by using binary search
      */
@@ -80,6 +174,16 @@ impl Category {
         }
 
         None
+    }
+}
+
+impl Mapping {
+    fn source_end(&self) -> u64 {
+        self.source_start + self.range_length
+    }
+
+    fn destination_end(&self) -> u64 {
+        self.destination_start + self.range_length
     }
 }
 
@@ -175,28 +279,46 @@ fn part2(almanac: &Almanac) -> String {
 
     let mut lowest_location = u64::MAX;
 
-    // COMPLETELY WRONG
-    for (mut start, mut end) in seed_ranges.iter() {
 
-        while start < end {
-            let first_category = &almanac.categories[0];
+    let mut categories = almanac.categories.clone();
 
-            let mapping_maybe = first_category.find_matching_mapping(start);
-            println!("inside {:?}, {:?} | {:?}", start, end, mapping_maybe);
+    let merged_category = Category::merge(&categories);
 
-            match mapping_maybe {
-                Some(mapping) => {
-                    lowest_location = lowest_location.min(almanac.find_seed_location(start));
+    println!("Final mapping: {:?}", merged_category);
 
-                    start = mapping.source_start + mapping.range_length;
-                },
-                None => {
-                    lowest_location = lowest_location.min(almanac.find_seed_location(start));
-                    start += 1;
-                },
-            }
-        }
+    "".to_owned()
+}
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use crate::{Category, Mapping};
+
+    #[test]
+    fn test1() {
+        let a = Category {
+            mappings: vec![
+                Mapping { source_start: 8, range_length: 10, destination_start: 5 },
+            ],
+        };
+
+        let b = Category {
+            mappings: vec![
+                Mapping { source_start: 2, range_length: 10, destination_start: 3 },
+            ],
+        };
+
+        // 2-8   -> 3-9
+        // 8-12  -> 6-10
+        // 12-18 -> 9-15
+
+        println!("\n\nstart-----------------------\n");
+
+        let result = Category::merge(&vec![a, b]);
+
+        println!("{:?}\n", result);
+        println!("done-----------------------\n\n");
     }
-
-    lowest_location.to_string()
 }
