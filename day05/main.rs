@@ -1,4 +1,4 @@
-use std::{fs, str::FromStr, thread::sleep, time::Duration};
+use std::{collections::VecDeque, fs, str::FromStr, thread::sleep, time::Duration};
 
 fn main() {
     let contents = fs::read_to_string("./exampleinput")
@@ -19,16 +19,17 @@ struct Almanac {
     categories: Vec<Category>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Category {
     mappings: Vec<Mapping>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Mapping {
     source_start: u64,
-    range_length: u64,
+    source_end: u64,
     destination_start: u64,
+    destination_end: u64,
 }
 
 impl Almanac {
@@ -40,6 +41,49 @@ impl Almanac {
 }
 
 impl Category {
+    fn merge(&self, source: &Self) -> Self {
+        let mut _sources = source.mappings.clone();
+        _sources.sort_by_key(|x| x.destination_start);
+        let mut sources = VecDeque::from(_sources);
+        let mut destinations = VecDeque::from(self.mappings.clone());
+        let mut merged: Vec<Mapping> = Vec::new();
+
+        while ! sources.is_empty() && ! destinations.is_empty() {
+            let s = &mut sources[0];
+            let d = &mut destinations[0];
+
+            // Copy from destination
+            if d.source_start < s.destination_start {
+                let len = (s.destination_start - d.source_start).min(d.source_start - d.source_end);
+
+                let mapping = Mapping {
+                    source_start: d.source_start,
+                    source_end: d.source_start + len,
+                    destination_start: d.destination_start,
+                    destination_end: d.destination_start + len,
+                };
+
+                merged.push(mapping);
+                d.source_start += len;
+                d.destination_start += len;
+
+                if d.source_end - d.source_start == 0 {
+                    destinations.pop_front();
+                }
+
+                continue;
+            }
+
+
+            // Copy from source
+
+
+        }
+
+        
+        unimplemented!()
+    }
+
     /**
      * Find the destination of a source by using binary search
      */
@@ -62,7 +106,7 @@ impl Category {
             let mid_item = &self.mappings[mid];
             
             if mid_item.source_start <= source
-               && source < mid_item.source_start + mid_item.range_length {
+               && source < mid_item.source_end {
 
                 return Some(mid_item);
             }
@@ -72,7 +116,7 @@ impl Category {
                 continue;
             }
 
-            if mid_item.source_start + mid_item.range_length <= source {
+            if mid_item.source_end <= source {
                 s = mid + 1;
                 continue;
             }
@@ -144,8 +188,9 @@ impl FromStr for Mapping {
                 Ok(
                     Self {
                         destination_start: a,
+                        destination_end: a + c,
                         source_start: b,
-                        range_length: c,
+                        source_end: b + c,
                     }
                 ),
             _ =>
@@ -175,28 +220,48 @@ fn part2(almanac: &Almanac) -> String {
 
     let mut lowest_location = u64::MAX;
 
-    // COMPLETELY WRONG
-    for (mut start, mut end) in seed_ranges.iter() {
 
-        while start < end {
-            let first_category = &almanac.categories[0];
+    let categories = almanac.categories.clone().into_iter().rev().take(2).collect::<Vec<Category>>();
 
-            let mapping_maybe = first_category.find_matching_mapping(start);
-            println!("inside {:?}, {:?} | {:?}", start, end, mapping_maybe);
+    let merged = categories.into_iter().reduce(|a, b| a.merge(&b));
 
-            match mapping_maybe {
-                Some(mapping) => {
-                    lowest_location = lowest_location.min(almanac.find_seed_location(start));
+    println!("Final mapping: {:?}", merged);
 
-                    start = mapping.source_start + mapping.range_length;
-                },
-                None => {
-                    lowest_location = lowest_location.min(almanac.find_seed_location(start));
-                    start += 1;
-                },
-            }
-        }
-    }
-
-    lowest_location.to_string()
+    "".to_owned()
 }
+
+
+
+/*
+
+#[cfg(test)]
+mod tests {
+    use crate::{Category, Mapping};
+
+    #[test]
+    fn test1() {
+        let a = Category {
+            mappings: vec![
+                Mapping { source_start: 8, range_length: 10, destination_start: 5 },
+            ],
+        };
+
+        let b = Category {
+            mappings: vec![
+                Mapping { source_start: 2, range_length: 10, destination_start: 3 },
+            ],
+        };
+
+        // 2-8   -> 3-9
+        // 8-12  -> 6-10
+        // 12-18 -> 9-15
+
+        println!("\n\nstart-----------------------\n");
+
+        let result = Category::merge(&vec![a, b]);
+
+        println!("{:?}\n", result);
+        println!("done-----------------------\n\n");
+    }
+}
+*/
